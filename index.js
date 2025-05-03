@@ -1,16 +1,16 @@
 // index_no_merge.js  – 10 000-row batches, no merges during ingest
 // ----------------------------------------------------------------
-//  * Keeps ≤ 2 parts live → arenas ≈ 0.8-1 GiB
+//  * Keeps = 2 parts live ? arenas ˜ 0.8-1 GiB
 //  * Retries on ClickHouse 253 / 241 and socket resets
 //  * Prints a safe, disk-spilling OPTIMIZE command when finished
 
 /* 0 · CONFIG ---------------------------------------------------- */
-const TOTAL_ROWS        = 10_000_000;
-const BATCH_SIZE        = 10_000;          // rows per part
+const TOTAL_ROWS        = 2_000_000;
+const BATCH_SIZE        = 20_000;          // rows per part
 const PARTS_PER_CYCLE   = 2;               // still counted (no merge call)
 const RETRY_WAIT_MS     = 10_000;
-const SLEEP_EVERY       = 20_000;
-const SLEEP_MS          = 5_000;
+const SLEEP_EVERY       = 30_000;
+const SLEEP_MS          = 15_000;
 
 /* 1 · IMPORTS & CLIENTS ---------------------------------------- */
 import { createClient } from '@clickhouse/client';
@@ -22,10 +22,13 @@ const insertClient = () => createClient({
   url: 'http://localhost:8123',
   username: 'default',
   keep_alive: { enabled: false },
+  database: 'drill_tests',
   clickhouse_settings: {
-    async_insert: 0,
-    optimize_on_insert: 0,
-    input_format_parallel_parsing: 0,
+    async_insert: 1,
+    optimize_on_insert: 1,
+    input_format_parallel_parsing: 1,
+    wait_for_async_insert: 1,
+    wait_end_of_query: 1,
     max_insert_block_size: BATCH_SIZE
   }
 });
@@ -41,11 +44,11 @@ while (DISORDER.size < TOTAL_ROWS * 0.01)
   DISORDER.add(Math.floor(Math.random() * TOTAL_ROWS));
 
 /* 3 · CONSTANT ARRAYS & RAND ----------------------------------- */
-const CONST_A       = crypto.randomBytes(12).toString('hex');
+const CONST_A       = "APP_ID";
 const EVENT_TYPES   = ['[CLY]_session','[CLY]_view','[CLY]_action',
                        '[CLY]_crash','[CLY]_star_rating','[CLY]_push'];
 const CMP_CHANNELS  = ['Organic','Direct','Email','Paid'];
-const SG_KEYS       = Array.from({ length: 8_000 },
+const SG_KEYS       = Array.from({ length: 10_000 },
                        (_, i) => `k${(i+1).toString().padStart(4,'0')}`);
 const CUSTOM_POOL   = [
   { 'Account Types':'Savings' }, { 'Account Types':'Investment' },
@@ -135,7 +138,9 @@ async function insertPart(offset){
   while(true){
     const ch=insertClient();
     try{
-      await ch.insert({table:'drill_events',values:st,format:'JSONEachRow'});
+      console.log(`[${new Date().toISOString()}] Starting insert for offset ${offset}...`);
+      await ch.insert({table:'drill_events_8K',values:st,format:'JSONEachRow'});
+      console.log(`[${new Date().toISOString()}] Finished insert for offset ${offset}.`);
       await ch.close(); return;
     }catch(e){
       await ch.close();
@@ -143,7 +148,7 @@ async function insertPart(offset){
                     (e.message&&e.message.includes('ECONNRESET'));
       const mem   = e.code==='241'||/MEMORY_LIMIT_EXCEEDED/.test(e.message);
       if(!reset && !mem && e.code!=='253') throw e;
-      console.log(`⚠️  ${e.code||''} ${e.message.trim()} → retry in 10 s`);
+      console.log(`??  ${e.code||''} ${e.message.trim()} ? retry in 10 s`);
       await sleep(RETRY_WAIT_MS);
       st = stream(offset,BATCH_SIZE);
     }
@@ -157,20 +162,20 @@ async function insertPart(offset){
     await insertPart(inserted);
     inserted += BATCH_SIZE; parts += 1;
 
-    console.log(`✔ ${inserted.toLocaleString()} / ${TOTAL_ROWS.toLocaleString()} inserted`);
+    console.log(`? ${inserted.toLocaleString()} / ${TOTAL_ROWS.toLocaleString()} inserted`);
     if (inserted % SLEEP_EVERY === 0) {
-      console.log(`⏳ Sleeping ${SLEEP_MS/1000}s …`);
+      console.log(`? Sleeping ${SLEEP_MS/1000}s …`);
       await sleep(SLEEP_MS);
     }
 
     if (parts === PARTS_PER_CYCLE) parts = 0;   // just reset counter
   }
 
-  console.log('\n🎉 Ingestion complete.');
+  console.log('\n?? Ingestion complete.');
   console.log(
     '\nTo merge the parts later, run:\n' +
     'clickhouse-client -q "' +
-    'OPTIMIZE TABLE drill_events FINAL ' +
+    'OPTIMIZE TABLE drill_events_8K FINAL ' +
     'SETTINGS allow_disk_spill_for_merge = 1, max_memory_usage = \'20G\'"' +
     '\n'
   );
