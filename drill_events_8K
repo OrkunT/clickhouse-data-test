@@ -1,0 +1,20 @@
+CREATE TABLE drill_tests.drill_events_8K (
+    a LowCardinality(String),
+    e LowCardinality(String),
+    uid String,
+    did String,
+    lsid String,
+    _id String,
+    ts UInt64,
+    up JSON(max_dynamic_paths = 128),
+    custom JSON(max_dynamic_paths = 128),
+    cmp JSON(max_dynamic_paths = 32),
+    sg JSON(max_dynamic_paths = 128),
+    c UInt32,
+    s Float64,
+    dur UInt32
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(fromUnixTimestamp64Milli(ts))
+ORDER BY (a, e, ts)
+SETTINGS index_granularity = 8192;
